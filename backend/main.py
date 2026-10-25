@@ -117,17 +117,74 @@ SYSTEM_PROMPT: str = (
 
 OFFLINE_REPLY_TEXT = "Our support system is currently offline. Please try again later."
 RATE_LIMIT_REPLY_TEXT = "You are sending messages too quickly. Please wait a moment and try again."
+SPAM_REPLY_TEXT = "Please enter a clear question about your Kore Essentials order (e.g., #1024) or our store policies."
+DUPLICATE_REPLY_TEXT = "You just sent that message—please check the reply above or ask a different question."
 
-# ───────────────────────── Rate Limiting & DoS Protection ─────────────────────────
+# ───────────────────────── Rate Limiting, Anti-Spam & DoS Protection ─────────────────────────
 
 MAX_BODY_BYTES = 16 * 1024  # 16 KB maximum request payload
 MAX_OUTPUT_TOKENS = 220
 
-RATE_LIMIT_BURST_15S = int(_get_setting("RATE_LIMIT_BURST_PER_15S", "5"))
-RATE_LIMIT_PER_MIN = int(_get_setting("RATE_LIMIT_PER_MINUTE", "20"))
-RATE_LIMIT_PER_HOUR = int(_get_setting("RATE_LIMIT_PER_HOUR", "100"))
-GLOBAL_LIMIT_PER_MIN = int(_get_setting("GLOBAL_RATE_LIMIT_PER_MINUTE", "120"))
+RATE_LIMIT_BURST_10S = int(_get_setting("RATE_LIMIT_BURST_PER_10S", "3"))
+RATE_LIMIT_PER_MIN = int(_get_setting("RATE_LIMIT_PER_MINUTE", "12"))
+RATE_LIMIT_PER_HOUR = int(_get_setting("RATE_LIMIT_PER_HOUR", "60"))
+GLOBAL_LIMIT_PER_MIN = int(_get_setting("GLOBAL_RATE_LIMIT_PER_MINUTE", "100"))
 MAX_TRACKED_IPS = 4096
+
+_VALID_SHORT_WORDS = {
+    "hi", "hey", "yo", "ok", "yes", "no", "uk", "faq", "help", "order", "status",
+    "return", "policy", "ship", "cost", "free", "days", "late", "lost", "item",
+    "when", "what", "where", "who", "why", "how", "can", "may", "buy", "new", "fee", "tax",
+}
+_KEYBOARD_MASH_RE = re.compile(
+    r"(asdf|sdfg|dfgh|fghj|ghjk|hjkl|qwer|wert|erty|rtyu|tyui|yuio|uiop|zxcv|xcvb|cvbn|vbnm)",
+    re.IGNORECASE,
+)
+_CONSONANT_CLUSTER_RE = re.compile(r"[bcdfghjklmnpqrstvwxyz]{5,}", re.IGNORECASE)
+_CHAR_FLOOD_RE = re.compile(r"(.)\1{4,}", re.IGNORECASE)
+_PAIR_FLOOD_RE = re.compile(r"(..)\1{3,}", re.IGNORECASE)
+_ORDER_ONLY_RE = re.compile(r"^#?\d{3,6}$")
+_TOKEN_RE = re.compile(r"[a-z0-9#]+")
+
+
+def _validate_customer_input(text: str, previous_user_messages: List[str]) -> Tuple[bool, str]:
+    cleaned = text.strip()
+    if len(cleaned) < 2:
+        return False, SPAM_REPLY_TEXT
+
+    normalized = re.sub(r"\s+", " ", cleaned.lower())
+    recent_normalized = [re.sub(r"\s+", " ", m.lower()) for m in previous_user_messages[-2:]]
+    if normalized in recent_normalized:
+        return False, DUPLICATE_REPLY_TEXT
+
+    if (
+        _CHAR_FLOOD_RE.search(cleaned)
+        or _PAIR_FLOOD_RE.search(cleaned)
+        or _KEYBOARD_MASH_RE.search(cleaned)
+        or _CONSONANT_CLUSTER_RE.search(cleaned)
+    ):
+        return False, SPAM_REPLY_TEXT
+
+    if _ORDER_ONLY_RE.match(cleaned):
+        return True, cleaned
+
+    tokens = _TOKEN_RE.findall(cleaned.lower())
+    if not tokens:
+        return False, SPAM_REPLY_TEXT
+
+    multi_char_tokens = [t for t in tokens if len(t.lstrip("#")) >= 2]
+    if not multi_char_tokens:
+        return False, SPAM_REPLY_TEXT
+
+    if len(tokens) == 1 and re.match(r"^[a-z]{2,3}$", tokens[0]) and tokens[0] not in _VALID_SHORT_WORDS:
+        return False, SPAM_REPLY_TEXT
+
+    alpha_words_4plus = [t for t in tokens if re.match(r"^[a-z]{4,}$", t)]
+    if alpha_words_4plus and not any(re.search(r"[aeiouy]", w) for w in alpha_words_4plus):
+        return False, SPAM_REPLY_TEXT
+
+    return True, cleaned
+
 
 _rate_lock = threading.Lock()
 _ip_timestamps: Dict[str, Deque[float]] = {}
@@ -164,10 +221,10 @@ def _check_rate_limit(client_ip: str) -> Tuple[bool, int]:
             retry = max(1, int(60.0 - (now - recent_1m[0])))
             return False, retry
 
-        # Burst 15-second check
-        recent_15s = [t for t in recent_1m if now - t <= 15.0]
-        if len(recent_15s) >= RATE_LIMIT_BURST_15S:
-            retry = max(1, int(15.0 - (now - recent_15s[0])))
+        # Burst 10-second check
+        recent_10s = [t for t in recent_1m if now - t <= 10.0]
+        if len(recent_10s) >= RATE_LIMIT_BURST_10S:
+            retry = max(1, int(10.0 - (now - recent_10s[0])))
             return False, retry
 
         bucket.append(now)
@@ -321,6 +378,7 @@ async def chat(payload: ChatRequest, request: Request):
     # 2. Extract and validate customer conversation
     user_prompt = (payload.message or payload.prompt or "").strip()
     conversation: List[Dict[str, str]] = []
+    previous_user_texts: List[str] = []
 
     if payload.messages:
         for msg in payload.messages[-12:]:
@@ -330,6 +388,13 @@ async def chat(payload: ChatRequest, request: Request):
                 if msg["role"] == "user":
                     user_prompt = msg["content"]
                     break
+        found_last_user = False
+        for msg in reversed(conversation):
+            if msg["role"] == "user":
+                if not found_last_user:
+                    found_last_user = True
+                else:
+                    previous_user_texts.insert(0, msg["content"])
     elif user_prompt:
         conversation = [{"role": "user", "content": user_prompt}]
 
@@ -338,6 +403,10 @@ async def chat(payload: ChatRequest, request: Request):
             status_code=status.HTTP_400_BAD_REQUEST,
             content={"reply": "Please enter a message."},
         )
+
+    is_valid, validation_msg = _validate_customer_input(user_prompt, previous_user_texts)
+    if not is_valid:
+        return ChatResponse(reply=validation_msg)
 
     if client is None:
         logger.error("GROQ_API_KEY is not configured.")

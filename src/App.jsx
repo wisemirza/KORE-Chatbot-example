@@ -14,6 +14,56 @@ import { BotMessageSquareIcon } from './components/BotMessageSquareIcon';
 
 const EASE = [0.22, 1, 0.36, 1];
 const OFFLINE_REPLY = 'Our support system is currently offline. Please try again later.';
+const SPAM_REPLY = 'Please enter a clear question about your Kore Essentials order (e.g., #1024) or our store policies.';
+const DUPLICATE_REPLY = 'You just sent that message—please check the reply above or ask a different question.';
+const RATE_LIMIT_REPLY = 'You are sending messages too quickly. Please wait a moment and try again.';
+
+const VALID_SHORT_WORDS = new Set([
+  'hi', 'hey', 'yo', 'ok', 'yes', 'no', 'uk', 'faq', 'help', 'order', 'status',
+  'return', 'policy', 'ship', 'cost', 'free', 'days', 'late', 'lost', 'item',
+  'when', 'what', 'where', 'who', 'why', 'how', 'can', 'may', 'buy', 'new', 'fee', 'tax',
+]);
+const KEYBOARD_MASH_RE = /(asdf|sdfg|dfgh|fghj|ghjk|hjkl|qwer|wert|erty|rtyu|tyui|yuio|uiop|zxcv|xcvb|cvbn|vbnm)/i;
+const CONSONANT_CLUSTER_RE = /[bcdfghjklmnpqrstvwxyz]{5,}/i;
+const CHAR_FLOOD_RE = /(.)\1{4,}/i;
+const PAIR_FLOOD_RE = /(..)\1{3,}/i;
+
+function validateClientInput(text, previousUserMessages) {
+  const cleaned = text.trim();
+  if (cleaned.length < 2) return SPAM_REPLY;
+
+  const normalized = cleaned.toLowerCase().replace(/\s+/g, ' ');
+  const recentNormalized = previousUserMessages.slice(-2).map((m) => m.toLowerCase().replace(/\s+/g, ' '));
+  if (recentNormalized.includes(normalized)) return DUPLICATE_REPLY;
+
+  if (
+    CHAR_FLOOD_RE.test(cleaned) ||
+    PAIR_FLOOD_RE.test(cleaned) ||
+    KEYBOARD_MASH_RE.test(cleaned) ||
+    CONSONANT_CLUSTER_RE.test(cleaned)
+  ) {
+    return SPAM_REPLY;
+  }
+
+  if (/^#?\d{3,6}$/.test(cleaned)) return null;
+
+  const tokens = cleaned.toLowerCase().match(/[a-z0-9#]+/g) || [];
+  if (tokens.length === 0) return SPAM_REPLY;
+
+  const multiCharTokens = tokens.filter((t) => t.replace(/^#/, '').length >= 2);
+  if (multiCharTokens.length === 0) return SPAM_REPLY;
+
+  if (tokens.length === 1 && /^[a-z]{2,3}$/.test(tokens[0]) && !VALID_SHORT_WORDS.has(tokens[0])) {
+    return SPAM_REPLY;
+  }
+
+  const alphaWords4Plus = tokens.filter((t) => /^[a-z]{4,}$/.test(t));
+  if (alphaWords4Plus.length > 0 && !alphaWords4Plus.some((w) => /[aeiouy]/.test(w))) {
+    return SPAM_REPLY;
+  }
+
+  return null;
+}
 
 const SUGGESTIONS = [
   { icon: PackageSearch, label: 'Where’s order #1024?', prompt: 'Where is order #1024?' },
@@ -277,6 +327,7 @@ export default function App() {
   const idRef = useRef(0);
   const runRef = useRef(0);
   const busyRef = useRef(false);
+  const sendTimestampsRef = useRef([]);
   const scrollRef = useRef(null);
   const inputRef = useRef(null);
   const guideBtnRef = useRef(null);
@@ -287,32 +338,48 @@ export default function App() {
     busyRef.current = true;
     const run = runRef.current;
 
+    const previousUserMessages = messagesRef.current
+      .filter((m) => m.role === 'user')
+      .map((m) => m.text);
+
     messagesRef.current = [...messagesRef.current, { id: ++idRef.current, role: 'user', text }];
     setMessages(messagesRef.current);
     setDraft('');
     setTyping(true);
 
     const started = Date.now();
+    const recent1m = sendTimestampsRef.current.filter((t) => started - t <= 60000);
+    const recent10s = recent1m.filter((t) => started - t <= 10000);
+    const isClientRateLimited = recent10s.length >= 3 || recent1m.length >= 12;
+    const clientSpamReason = isClientRateLimited
+      ? RATE_LIMIT_REPLY
+      : validateClientInput(text, previousUserMessages);
+
     let reply = OFFLINE_REPLY;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
-    try {
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
-        body: JSON.stringify({
-          messages: messagesRef.current.slice(-12).map(({ role, text: content }) => ({ role, content })),
-        }),
-      });
-      const data = await response.json().catch(() => null);
-      if (data && typeof data.reply === 'string' && data.reply.trim()) {
-        reply = data.reply.trim();
+    if (clientSpamReason) {
+      reply = clientSpamReason;
+    } else {
+      sendTimestampsRef.current = [...recent1m, started];
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
+      try {
+        const response = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
+          body: JSON.stringify({
+            messages: messagesRef.current.slice(-12).map(({ role, text: content }) => ({ role, content })),
+          }),
+        });
+        const data = await response.json().catch(() => null);
+        if (data && typeof data.reply === 'string' && data.reply.trim()) {
+          reply = data.reply.trim();
+        }
+      } catch {
+        /* backend unreachable or timed out: fall through to the offline message */
+      } finally {
+        clearTimeout(timeoutId);
       }
-    } catch {
-      /* backend unreachable or timed out: fall through to the offline message */
-    } finally {
-      clearTimeout(timeoutId);
     }
 
     // Keep the typing indicator on screen long enough to feel natural.
