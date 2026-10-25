@@ -172,7 +172,9 @@ export async function handler(event) {
     return jsonResponse(415, { reply: 'Content-Type must be application/json.' });
   }
 
-  const rawBody = event.body || '';
+  const rawBody = event.isBase64Encoded
+    ? Buffer.from(event.body || '', 'base64').toString('utf8')
+    : event.body || '';
   if (Buffer.byteLength(rawBody, 'utf8') > MAX_BODY_BYTES) {
     return jsonResponse(413, { reply: 'Message payload is too large.' });
   }
@@ -252,7 +254,16 @@ export async function handler(event) {
     return jsonResponse(200, { reply: validation.reason });
   }
 
-  const apiKey = process.env.GROQ_API_KEY;
+  const rawKey =
+    process.env.GROQ_API_KEY ||
+    process.env.Croq ||
+    process.env.CROQ ||
+    process.env.Groq ||
+    process.env.GROQ ||
+    process.env.groq ||
+    process.env.croq ||
+    Object.values(process.env).find((val) => typeof val === 'string' && val.trim().startsWith('gsk_'));
+  const apiKey = rawKey ? rawKey.trim() : '';
   if (!apiKey) {
     return jsonResponse(503, { reply: OFFLINE_REPLY });
   }
