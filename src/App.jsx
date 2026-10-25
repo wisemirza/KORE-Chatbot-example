@@ -14,8 +14,8 @@ import { BotMessageSquareIcon } from './components/BotMessageSquareIcon';
 
 const EASE = [0.22, 1, 0.36, 1];
 const OFFLINE_REPLY = 'Our support system is currently offline. Please try again later.';
-const SPAM_REPLY = 'Please enter a clear question about your Kore Essentials order (e.g., #1024) or our store policies.';
-const DUPLICATE_REPLY = 'You just sent that message—please check the reply above or ask a different question.';
+const SPAM_REPLY = 'Please enter a clear question about your Kore Essentials order (e.g., "Where is my order?") or our store policies.';
+const DUPLICATE_REPLY = 'You just sent that message. Please check the reply above or ask a different question.';
 const RATE_LIMIT_REPLY = 'You are sending messages too quickly. Please wait a moment and try again.';
 
 const VALID_SHORT_WORDS = new Set([
@@ -97,7 +97,7 @@ Role: Customer support assistant. Be brief and helpful.
 
 Store Policies:
 - Returns: 14-day returns accepted.
-- Shipping: Free shipping on orders over £50; standard shipping is £5 (3–5 days).
+- Shipping: Free shipping on orders over £50; standard shipping is £5 (3-5 days).
 
 Order Database:
 - Order #1024: Out for delivery today
@@ -373,7 +373,7 @@ export default function App() {
         });
         const data = await response.json().catch(() => null);
         if (data && typeof data.reply === 'string' && data.reply.trim()) {
-          reply = data.reply.trim();
+          reply = data.reply.replace(/\s*—\s*/g, ', ').trim();
         }
       } catch {
         /* backend unreachable or timed out: fall through to the offline message */
