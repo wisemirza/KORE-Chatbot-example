@@ -92,6 +92,8 @@ function wordReveal(step, base) {
   };
 }
 
+const SAFE_DISALLOWED_MD_ELEMENTS = ['a', 'img', 'script', 'iframe', 'object', 'embed', 'form', 'input', 'style'];
+
 function Markdown({ text, reveal = false, delay = 0 }) {
   const plugins = useMemo(() => {
     if (!reveal) return [];
@@ -101,7 +103,13 @@ function Markdown({ text, reveal = false, delay = 0 }) {
 
   return (
     <div className="md">
-      <ReactMarkdown rehypePlugins={plugins}>{text}</ReactMarkdown>
+      <ReactMarkdown
+        rehypePlugins={plugins}
+        disallowedElements={SAFE_DISALLOWED_MD_ELEMENTS}
+        unwrapDisallowed
+      >
+        {text}
+      </ReactMarkdown>
     </div>
   );
 }
@@ -274,7 +282,7 @@ export default function App() {
   const guideBtnRef = useRef(null);
 
   const send = useCallback(async (raw) => {
-    const text = raw.trim();
+    const text = String(raw || '').trim().slice(0, 500);
     if (!text || busyRef.current) return;
     busyRef.current = true;
     const run = runRef.current;
@@ -286,20 +294,25 @@ export default function App() {
 
     const started = Date.now();
     let reply = OFFLINE_REPLY;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
     try {
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify({
           messages: messagesRef.current.slice(-12).map(({ role, text: content }) => ({ role, content })),
         }),
       });
-      if (response.ok) {
-        const data = await response.json();
-        reply = data.reply?.trim() || OFFLINE_REPLY;
+      const data = await response.json().catch(() => null);
+      if (data && typeof data.reply === 'string' && data.reply.trim()) {
+        reply = data.reply.trim();
       }
     } catch {
-      /* backend unreachable: fall through to the offline message */
+      /* backend unreachable or timed out: fall through to the offline message */
+    } finally {
+      clearTimeout(timeoutId);
     }
 
     // Keep the typing indicator on screen long enough to feel natural.
