@@ -1,43 +1,36 @@
-# Kore Essentials — storefront demo
+# KORE Chatbot
 
-A responsive dark-mode storefront built with React, Vite, Tailwind CSS v4, Framer Motion, and Lucide icons.
+A small chatbot project built as a fun experiment to explore how AI can help answer customer questions.
 
-## Run locally
+**🌐 [Try the live website](https://korechat.netlify.app/)**
 
-Requirements: Node.js 20.19+ or 22.12+.
+## About the Project
 
-### 1. Frontend (React + Vite)
-```bash
-npm install
-npm run dev
-```
+KORE Chatbot is a simple example of a customer-support chatbot for a fictional online store called Kore Essentials.
 
-### 2. Backend (FastAPI + Groq API Chatbot)
-```bash
-pip install -r backend/requirements.txt
-npm run backend
-# or: python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
-```
+You can ask it questions about orders, shipping costs, and return policies. The project explores how a chatbot can respond to questions using information about a store.
 
-For a production frontend build:
+## What Can It Do?
 
-```bash
-npm run build
-npm run preview
-```
+- Answer questions about example orders.
+- Explain shipping costs and return policies.
+- Respond to messages through a simple chat interface.
+- Show how AI can be used for basic customer support.
 
+## Important Note
 
-## Included interactions
+This is a small experimental project made for fun and learning. It is not professional or production-ready software.
 
-- Sticky navigation with a responsive mobile menu
-- Scroll-reveal product cards and hover/tap motion
-- Add-to-bag controls, item quantities, subtotal, and a cart drawer
-- Floating customer-support chat with spring open/close animation, preset questions, message input, typing indicator, and sample replies
-- Email newsletter form with basic client-side validation and success feedback
-- Reduced-motion preference support and keyboard focus styles
+The store, policies, and order details are fictional examples. The chatbot is not connected to a real shop or delivery service, but it demonstrates an actual function live chatbot for a store.
 
-## Before launch
+## Built With
 
-This is a front-end storefront demo. The checkout button is deliberately not connected to a payment service; chat replies are sample responses; product prices/content are sample data. Connect a commerce backend, real customer support, shipping/returns policy pages, analytics, privacy/consent handling, and production product imagery before deploying for real sales.
+- React
+- JavaScript
+- Python
+- Groq AI 
 
-Product and hero photography is loaded from Unsplash URLs; the browser needs internet access for those images and Google Fonts.
+## Try It Yourself
+
+Visit the [live demo](https://korechat.netlify.app/) to try the chatbot directly in your browser. No installation is needed.
+
